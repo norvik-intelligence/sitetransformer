@@ -85,7 +85,10 @@ export default function ScraperHome() {
             </div>
 
             <div className="mt-8 grid max-w-3xl gap-3 text-sm md:grid-cols-3">
-              {proofPoints.map((point) => <div key={point.label} className="rounded-3xl border border-white/10 bg-white/[0.045] p-4 text-white/55 backdrop-blur transition hover:-translate-y-1 hover:bg-white/[0.07]"><point.icon className="mb-4 h-5 w-5 text-cyan-300" /><b className="block text-white">{point.label}</b><span>{point.value}</span></div>)}
+              {proofPoints.map((point) => {
+                const Icon = point.icon;
+                return <div key={point.label} className="rounded-3xl border border-white/10 bg-white/[0.045] p-4 text-white/55 backdrop-blur transition hover:-translate-y-1 hover:bg-white/[0.07]"><Icon className="mb-4 h-5 w-5 text-cyan-300" /><b className="block text-white">{point.label}</b><span>{point.value}</span></div>;
+              })}
             </div>
           </div>
 
