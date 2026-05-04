@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Download, FileCode2, Folder, GitBranch, Save, UploadCloud } from "lucide-react";
 import type { ScrapeProject, ScrapedFile } from "@/lib/scrape-types";
 import { downloadScrapeZip } from "@/lib/scrape-export";
+import { saveScrapeProject } from "@/lib/scrape-storage";
 
 function fileLabel(file: ScrapedFile) {
   return `${file.kind} · ${Math.round(file.bytes / 1024)} KB`;
@@ -26,9 +27,13 @@ export function ScrapeEditor({ initialProject }: { initialProject: ScrapeProject
     }));
   }
 
-  function saveLocal() {
-    localStorage.setItem(`scrape:${project.id}`, JSON.stringify(project));
-    setStatus("Gespeichert im Browser.");
+  async function saveLocal() {
+    try {
+      await saveScrapeProject(project);
+      setStatus("Gespeichert im Browser.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Speichern fehlgeschlagen.");
+    }
   }
 
   async function pushToGitHub() {
