@@ -54,8 +54,8 @@ function extractPageLinks(html: string, base: string, origin: string) {
 }
 
 async function fetchAsFile(url: string, rootUrl: string): Promise<ScrapedFile | null> {
-  const res = await fetch(url, { headers: { "User-Agent": "SiteTransformerScraper/1.0" }, redirect: "follow" });
-  if (!res.ok) return null;
+  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 SiteTransformerScraper/1.0", Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }, redirect: "follow" });
+  if (!res.ok) throw new Error(`Fetch failed ${res.status} ${res.statusText || ""}`.trim());
   const mimeType = res.headers.get("content-type")?.split(";")[0] || "application/octet-stream";
   const kind = kindFromUrl(url, mimeType);
   const buffer = Buffer.from(await res.arrayBuffer());
@@ -109,7 +109,7 @@ export async function scrapeSite(rootUrlInput: string, maxPages = 8, maxAssets =
       }
       files.set(file.path, file);
     } catch (error) {
-      warnings.push(`Page failed: ${pageUrl}`);
+      warnings.push(`Page failed: ${pageUrl} (${error instanceof Error ? error.message : "unknown error"})`);
     }
   }
 
@@ -117,12 +117,15 @@ export async function scrapeSite(rootUrlInput: string, maxPages = 8, maxAssets =
     try {
       const file = await fetchAsFile(assetUrl, rootUrl);
       if (file) files.set(file.path, file);
-    } catch {
-      warnings.push(`Asset failed: ${assetUrl}`);
+    } catch (error) {
+      warnings.push(`Asset failed: ${assetUrl} (${error instanceof Error ? error.message : "unknown error"})`);
     }
   }
 
   const html = [...files.values()].find((f) => f.kind === "html")?.content || "";
+  if (!html) {
+    throw new Error(`Keine HTML-Seite konnte gecrawlt werden. Die Website blockiert wahrscheinlich Server-Fetching oder benoetigt den Scrapling/Playwright Worker. Details: ${warnings.slice(0, 2).join(" | ") || "keine Antwort"}`);
+  }
   const title = html.match(/<title[^>]*>(.*?)<\/title>/i)?.[1]?.trim() || new URL(rootUrl).hostname;
   const allFiles = [...files.values()].sort((a, b) => a.path.localeCompare(b.path));
   return {
