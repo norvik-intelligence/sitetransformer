@@ -1,0 +1,60 @@
+{
+  "servers": {
+    "GitMCP Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/docs"
+    },
+    "GitMCP Source": {
+      "type": "sse",
+      "url": "https://gitmcp.io/idosal/git-mcp"
+    },
+    "Scrapling Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/D4Vinci/Scrapling"
+    },
+    "Playwright Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/microsoft/playwright"
+    },
+    "Crawlee Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/apify/crawlee"
+    },
+    "GrapesJS Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/GrapesJS/grapesjs"
+    },
+    "Craft.js Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/prevwong/craft.js"
+    },
+    "Webstudio Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/webstudio-is/webstudio"
+    },
+    "Plasmic Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/plasmicapp/plasmic"
+    },
+    "Onlook Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/onlook-dev/onlook"
+    },
+    "Motion Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/motiondivision/motion"
+    },
+    "xyflow Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/xyflow/xyflow"
+    },
+    "shadcn-ui Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/shadcn-ui/ui"
+    },
+    "MCP TypeScript SDK": {
+      "type": "sse",
+      "url": "https://gitmcp.io/modelcontextprotocol/typescript-sdk"
+    }
+  }
+}
