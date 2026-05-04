@@ -12,6 +12,16 @@ const proofPoints = [
 
 const pipeline = ["Research", "Crawl", "Normalize", "Edit", "Blueprint", "Ship"];
 
+async function readJsonOrThrow(res: Response) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const clean = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 280);
+    throw new Error(clean || `Server returned non-JSON response (${res.status}).`);
+  }
+}
+
 export default function ScraperHome() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,8 +32,9 @@ export default function ScraperHome() {
     setError("");
     try {
       const res = await fetch("/api/scrape", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url, maxPages: 8, maxAssets: 100 }) });
-      const data = await res.json();
+      const data = await readJsonOrThrow(res);
       if (!res.ok) throw new Error(data.error || "Scraping fehlgeschlagen");
+      if (!data.project) throw new Error("Der Scraper hat kein Projekt zurueckgegeben.");
       await saveScrapeProject(data.project);
       window.location.href = `/scrape/${data.project.id}`;
     } catch (e) {
