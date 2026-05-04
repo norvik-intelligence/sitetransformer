@@ -3,6 +3,7 @@ export type ISODate = string;
 export type DeviceMode = "desktop" | "mobile";
 export type ProjectStatus = "draft" | "mapping" | "ready" | "error";
 export type BlockKind = "hero" | "section" | "text" | "image" | "cta" | "features" | "testimonial" | "pricing" | "faq" | "footer";
+export type CloneMode = "pixel" | "blocks";
 
 export interface BrandTokens {
   name: string;
@@ -58,9 +59,11 @@ export interface SourceSnapshot {
   title?: string;
   description?: string;
   html?: string;
+  clonedHtml?: string;
   text: string;
   images: string[];
   capturedAt: ISODate;
+  cloneQuality?: { score: number; notes: string[] };
 }
 
 export interface MappingConfidence { blockId: ID; score: number; reason: string }
@@ -69,6 +72,7 @@ export interface SiteProject {
   id: ID;
   name: string;
   status: ProjectStatus;
+  cloneMode?: CloneMode;
   designUrl?: string;
   contentUrl?: string;
   brand: BrandTokens;
@@ -82,7 +86,7 @@ export interface SiteProject {
   error?: string;
 }
 
-export interface CloneRequest { designUrl: string; projectName?: string }
+export interface CloneRequest { designUrl: string; projectName?: string; cloneMode?: CloneMode }
 export interface ContentMappingRequest { project: SiteProject; contentUrl: string }
 export interface CloneResponse { project: SiteProject }
 export interface ContentMappingResponse { project: SiteProject; report: MappingConfidence[] }
