@@ -1,4 +1,5 @@
 export type ScrapedFileKind = "html" | "css" | "js" | "image" | "font" | "json" | "text" | "other";
+export type ScrapeJobStatus = "queued" | "fetching" | "extracting" | "saving" | "ready" | "failed";
 
 export interface ScrapedFile {
   path: string;
@@ -31,4 +32,19 @@ export interface ScrapeRequest {
   url: string;
   maxPages?: number;
   maxAssets?: number;
+  mode?: "auto" | "static-fetch" | "worker";
+}
+
+export interface ScrapeJob {
+  id: string;
+  status: ScrapeJobStatus;
+  progress: number;
+  message: string;
+  mode: "static-fetch" | "worker";
+  createdAt: string;
+  updatedAt: string;
+  request: ScrapeRequest;
+  project?: ScrapeProject;
+  error?: string;
+  warnings: string[];
 }
