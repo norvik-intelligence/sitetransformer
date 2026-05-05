@@ -31,6 +31,17 @@ def token_guard(authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+@app.get("/health")
+async def health(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    token_guard(authorization)
+    return {
+        "ok": True,
+        "worker": "SiteTransformer Scrapling Worker",
+        "scraplingAvailable": Fetcher is not None,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def kind_from_url(url: str, mime: str) -> str:
     lower = url.lower()
     if "html" in mime or lower.endswith(".html"):
