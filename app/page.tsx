@@ -1,17 +1,17 @@
 "use client";
 import { useState } from "react";
-import { ArrowRight, Boxes, Code2, Download, GitBranch, Globe2, Layers3, Loader2, MousePointer2, Search, ShieldCheck, Sparkles, Wand2 } from "lucide-react";
+import { ArrowRight, Boxes, Download, GitBranch, Globe2, Layers3, Loader2, Search, ShieldCheck, Sparkles } from "lucide-react";
 import { OpenSourceStackPanel } from "@/components/OpenSourceStackPanel";
 import { saveScrapeProject } from "@/lib/scrape-storage";
 import type { ScrapeJob } from "@/lib/scrape-types";
 
 const proofPoints = [
-  { label: "Capture", value: "HTML · CSS · JS · Assets", icon: Globe2 },
-  { label: "Studio", value: "Preview · Code · Content map", icon: MousePointer2 },
-  { label: "Ship", value: "ZIP · GitHub · Blueprint", icon: GitBranch }
+  { label: "Crawl", value: "HTML · CSS · JS · Assets", icon: Globe2 },
+  { label: "Inspect", value: "Preview · Code · Report", icon: Search },
+  { label: "Export", value: "ZIP · GitHub · Manifest", icon: GitBranch }
 ];
 
-const pipeline = ["Research", "Crawl", "Normalize", "Edit", "Blueprint", "Ship"];
+const pipeline = ["Queue", "Crawl", "Capture", "Normalize", "Report", "Export"];
 
 async function readJsonOrThrow(res: Response) {
   const text = await res.text();
@@ -83,7 +83,7 @@ export default function ScraperHome() {
             </div>
             <div>
               <div className="text-sm font-black tracking-tight">SiteTransformer</div>
-              <div className="text-xs text-white/45">Crawler Studio · Open Framer Blueprint</div>
+              <div className="text-xs text-white/45">Pure crawler · Scrapy-ready worker</div>
             </div>
           </div>
           <div className="hidden items-center gap-1 rounded-full border border-white/10 bg-black/30 p-1 text-xs font-bold text-white/55 md:flex">
@@ -95,18 +95,18 @@ export default function ScraperHome() {
         <section className="grid flex-1 items-center gap-12 py-16 lg:grid-cols-[1.04fr_.96fr]">
           <div className="max-w-4xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.075] px-4 py-2 text-sm font-bold text-white/70 shadow-2xl shadow-black/20 backdrop-blur-xl">
-              <Sparkles className="h-4 w-4 text-violet-300" /> GitMCP-powered crawler-to-Framer studio
+              <Sparkles className="h-4 w-4 text-violet-300" /> Scrapy-grade website capture pipeline
             </div>
             <h1 className="mt-7 text-[clamp(4.4rem,10vw,9.7rem)] font-black leading-[0.8] tracking-[-0.09em]">
               <span className="block bg-gradient-to-b from-white via-white to-white/40 bg-clip-text text-transparent">Crawl.</span>
-              <span className="block bg-gradient-to-r from-violet-200 via-white to-cyan-200 bg-clip-text text-transparent">Remix.</span>
-              <span className="block bg-gradient-to-b from-white to-white/45 bg-clip-text text-transparent">Ship.</span>
+              <span className="block bg-gradient-to-r from-violet-200 via-white to-cyan-200 bg-clip-text text-transparent">Inspect.</span>
+              <span className="block bg-gradient-to-b from-white to-white/45 bg-clip-text text-transparent">Export.</span>
             </h1>
-            <p className="mt-7 max-w-2xl text-xl leading-9 text-white/58">Ein Open-Source Studio, das Websites crawlt, als echte Dateien speichert, visuell editierbar macht und als Framer-artigen Motion Blueprint exportiert — ohne Lock-in.</p>
+            <p className="mt-7 max-w-2xl text-xl leading-9 text-white/58">Ein fokussierter Open-Source Crawler: Websites als echte HTML-, CSS-, JS-, Bild- und Asset-Dateien erfassen, sauber prüfen und als ZIP oder GitHub-Struktur exportieren.</p>
 
             <div className="mt-9 max-w-3xl rounded-[2.1rem] border border-white/12 bg-white/[0.08] p-2.5 shadow-[0_30px_110px_rgba(0,0,0,.55)] backdrop-blur-2xl">
               <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-                <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://website-to-transform.com" className="h-16 rounded-[1.5rem] border border-white/10 bg-black/35 px-5 text-base font-semibold text-white outline-none transition placeholder:text-white/25 focus:border-cyan-200/40 focus:ring-4 focus:ring-cyan-200/10" />
+                <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://website-to-crawl.com" className="h-16 rounded-[1.5rem] border border-white/10 bg-black/35 px-5 text-base font-semibold text-white outline-none transition placeholder:text-white/25 focus:border-cyan-200/40 focus:ring-4 focus:ring-cyan-200/10" />
                 <button onClick={scrape} disabled={!url || loading} className="inline-flex h-16 items-center justify-center rounded-[1.5rem] bg-white px-6 text-sm font-black text-black shadow-2xl shadow-white/10 transition hover:scale-[1.015] hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50">
                   {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowRight className="mr-2 h-4 w-4" />}{loading ? "Crawling..." : "Start crawler"}
                 </button>
@@ -139,12 +139,12 @@ export default function ScraperHome() {
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs text-white/45">
                       <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-3"><Boxes className="mb-2 h-4 w-4 text-violet-300" /> 128 assets</div>
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-3"><ShieldCheck className="mb-2 h-4 w-4 text-emerald-300" /> OSS only</div>
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-3"><ShieldCheck className="mb-2 h-4 w-4 text-emerald-300" /> Read-only</div>
                     </div>
                   </div>
                   <div className="overflow-hidden rounded-2xl border border-white/10 bg-white">
                     <div className="h-52 bg-[radial-gradient(circle_at_30%_20%,#a78bfa,transparent_26%),radial-gradient(circle_at_80%_25%,#22d3ee,transparent_22%),linear-gradient(135deg,#070712,#111827_45%,#f8fafc_46%,#ffffff)] p-5 text-black">
-                      <div className="mb-12 flex items-center justify-between"><div className="h-5 w-28 rounded-full bg-black/10" /><Wand2 className="h-5 w-5 text-black/30" /></div>
+                      <div className="mb-12 flex items-center justify-between"><div className="h-5 w-28 rounded-full bg-black/10" /><Search className="h-5 w-5 text-black/30" /></div>
                       <div className="h-8 w-60 rounded-full bg-black" />
                       <div className="mt-3 h-3 w-44 rounded-full bg-black/20" />
                       <div className="mt-2 h-3 w-32 rounded-full bg-black/20" />
@@ -154,7 +154,7 @@ export default function ScraperHome() {
                 </div>
               </div>
               <div className="absolute -bottom-7 -left-7 rounded-3xl border border-white/10 bg-black/65 p-4 shadow-2xl backdrop-blur-xl">
-                <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-400 text-black"><Download className="h-5 w-5" /></div><div><div className="text-sm font-black">Export ready</div><div className="text-xs text-white/45">ZIP · GitHub · Motion Blueprint</div></div></div>
+                <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-400 text-black"><Download className="h-5 w-5" /></div><div><div className="text-sm font-black">Export ready</div><div className="text-xs text-white/45">ZIP · GitHub · Report</div></div></div>
               </div>
             </div>
           </div>
