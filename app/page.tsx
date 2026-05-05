@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ArrowRight, Boxes, Code2, Download, GitBranch, Globe2, Layers3, Loader2, MousePointer2, Search, ShieldCheck, Sparkles, Wand2 } from "lucide-react";
 import { OpenSourceStackPanel } from "@/components/OpenSourceStackPanel";
 import { saveScrapeProject } from "@/lib/scrape-storage";
+import type { ScrapeJob } from "@/lib/scrape-types";
 
 const proofPoints = [
   { label: "Capture", value: "HTML · CSS · JS · Assets", icon: Globe2 },
@@ -22,21 +23,39 @@ async function readJsonOrThrow(res: Response) {
   }
 }
 
+async function waitForJob(jobId: string, onUpdate: (job: ScrapeJob) => void) {
+  for (let attempt = 0; attempt < 120; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, attempt < 5 ? 700 : 1400));
+    const res = await fetch(`/api/scrape/jobs/${jobId}`, { cache: "no-store" });
+    const data = await readJsonOrThrow(res);
+    if (!res.ok) throw new Error(data.error || "Scrape-Job konnte nicht gelesen werden.");
+    const job = data.job as ScrapeJob;
+    onUpdate(job);
+    if (job.status === "ready") return job;
+    if (job.status === "failed") throw new Error(job.error || job.message || "Scrape fehlgeschlagen.");
+  }
+  throw new Error("Scrape dauert zu lange. Bitte mit weniger Seiten/Assets erneut versuchen oder Worker aktivieren.");
+}
+
 export default function ScraperHome() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [job, setJob] = useState<ScrapeJob | null>(null);
 
   async function scrape() {
     setLoading(true);
     setError("");
+    setJob(null);
     try {
-      const res = await fetch("/api/scrape", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url, maxPages: 8, maxAssets: 100 }) });
+      const res = await fetch("/api/scrape/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url, maxPages: 8, maxAssets: 100, mode: "auto" }) });
       const data = await readJsonOrThrow(res);
-      if (!res.ok) throw new Error(data.error || "Scraping fehlgeschlagen");
-      if (!data.project) throw new Error("Der Scraper hat kein Projekt zurueckgegeben.");
-      await saveScrapeProject(data.project);
-      window.location.href = `/scrape/${data.project.id}`;
+      if (!res.ok) throw new Error(data.error || "Scrape-Job konnte nicht gestartet werden.");
+      setJob(data.job);
+      const finished = await waitForJob(data.job.id, setJob);
+      if (!finished.project) throw new Error("Der Scrape-Job ist fertig, aber enthaelt kein Projekt.");
+      await saveScrapeProject(finished.project);
+      window.location.href = `/scrape/${finished.project.id}`;
     } catch (e) {
       const message = e instanceof Error ? e.message : "Fehler";
       setError(message.includes("quota") || message.includes("Quota") ? "Die Website ist sehr gross. Der Scrape wurde verarbeitet, konnte aber nicht lokal gespeichert werden. Bitte nach dem Deployment erneut versuchen." : message);
@@ -92,6 +111,7 @@ export default function ScraperHome() {
                   {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowRight className="mr-2 h-4 w-4" />}{loading ? "Crawling..." : "Start crawler"}
                 </button>
               </div>
+              {job ? <div className="mt-3 rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-3"><div className="flex items-center justify-between text-sm font-bold text-cyan-100"><span>{job.message}</span><span>{job.progress}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-cyan-300 transition-all" style={{ width: `${job.progress}%` }} /></div></div> : null}
               {error ? <p className="mt-2 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-medium text-red-100">{error}</p> : null}
             </div>
 
