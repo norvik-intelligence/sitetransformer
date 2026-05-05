@@ -1,5 +1,6 @@
 import type { ScrapeJob, ScrapeRequest } from "./scrape-types";
 import { scrapeSite } from "./scraper";
+import { scrapeWithCrawlerWorker } from "./crawler-worker";
 import { nowIso, uid } from "./utils";
 
 const g = globalThis as unknown as { __sitetransformerJobs?: Map<string, ScrapeJob> };
@@ -26,7 +27,14 @@ async function runJob(id: string) {
   const job = jobs.get(id);
   if (!job) return;
   try {
-    setJob(id, { status: "fetching", progress: 18, message: "Website wird gecrawlt..." });
+    setJob(id, { status: "fetching", progress: 18, message: "Crawler wird gestartet..." });
+    const workerResult = await scrapeWithCrawlerWorker(job.request);
+    if (workerResult) {
+      setJob(id, { status: "saving", progress: 90, message: "Scrapy-Ergebnis wird vorbereitet...", mode: "worker" });
+      setJob(id, { status: "ready", progress: 100, message: "Scrape bereit.", project: workerResult.project, warnings: workerResult.project.stats.warnings, mode: "worker" });
+      return;
+    }
+    setJob(id, { status: "fetching", progress: 25, message: "Fallback Static-Fetch crawlt Website..." });
     const project = await scrapeSite(job.request.url, job.request.maxPages ?? 8, job.request.maxAssets ?? 80);
     setJob(id, { status: "saving", progress: 90, message: "Projekt wird vorbereitet..." });
     setJob(id, { status: "ready", progress: 100, message: "Scrape bereit.", project, warnings: project.stats.warnings });
