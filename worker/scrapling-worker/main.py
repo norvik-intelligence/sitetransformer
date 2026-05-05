@@ -1,22 +1,30 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
+import scrapy
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, HttpUrl
+from scrapy.crawler import CrawlerRunner
+from scrapy.http import Response
+from twisted.internet import asyncioreactor
 
 try:
-    from scrapling.fetchers import Fetcher
-except Exception:  # pragma: no cover
-    Fetcher = None
+    asyncioreactor.install()
+except Exception:
+    pass
 
-app = FastAPI(title="SiteTransformer Scrapling Worker")
+from twisted.internet import defer  # noqa: E402
+
+app = FastAPI(title="SiteTransformer Scrapy Worker")
 
 
 class ScrapeRequest(BaseModel):
@@ -26,7 +34,7 @@ class ScrapeRequest(BaseModel):
 
 
 def token_guard(authorization: str | None) -> None:
-    expected = os.getenv("SCRAPLING_WORKER_TOKEN")
+    expected = os.getenv("SCRAPY_WORKER_TOKEN") or os.getenv("CRAWLER_WORKER_TOKEN") or os.getenv("SCRAPLING_WORKER_TOKEN")
     if expected and authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -36,8 +44,8 @@ async def health(authorization: str | None = Header(default=None)) -> dict[str, 
     token_guard(authorization)
     return {
         "ok": True,
-        "worker": "SiteTransformer Scrapling Worker",
-        "scraplingAvailable": Fetcher is not None,
+        "worker": "SiteTransformer Scrapy Worker",
+        "engine": "scrapy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -48,7 +56,7 @@ def kind_from_url(url: str, mime: str) -> str:
         return "html"
     if "css" in mime or lower.endswith(".css"):
         return "css"
-    if "javascript" in mime or lower.endswith(".js"):
+    if "javascript" in mime or lower.endswith((".js", ".mjs")):
         return "js"
     if mime.startswith("image/"):
         return "image"
@@ -74,24 +82,17 @@ def path_from_url(url: str, root: str, kind: str) -> str:
     return path
 
 
-async def fetch_bytes(client: httpx.AsyncClient, url: str) -> tuple[bytes, str]:
-    response = await client.get(url, follow_redirects=True, timeout=20)
-    response.raise_for_status()
-    return response.content, response.headers.get("content-type", "application/octet-stream").split(";")[0]
-
-
-async def fetch_page(url: str) -> str:
-    if Fetcher is not None:
-        page = Fetcher.get(url)
-        return str(page.body)
-    async with httpx.AsyncClient(headers={"user-agent": "SiteTransformerScraplingWorker/1.0"}) as client:
-        content, _ = await fetch_bytes(client, url)
-        return content.decode("utf-8", errors="ignore")
+def html_title(html: str, fallback: str) -> str:
+    match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
+    if not match:
+        return fallback
+    return re.sub(r"\s+", " ", BeautifulSoup(match.group(1), "html.parser").get_text(" ")).strip() or fallback
 
 
 def extract_links(html: str, base: str) -> tuple[list[str], list[str]]:
     soup = BeautifulSoup(html, "html.parser")
-    origin = f"{urlparse(base).scheme}://{urlparse(base).netloc}"
+    parsed_base = urlparse(base)
+    origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
     pages: set[str] = set()
     assets: set[str] = set()
     for tag in soup.find_all(["a", "link", "script", "img", "source"]):
@@ -99,89 +100,131 @@ def extract_links(html: str, base: str) -> tuple[list[str], list[str]]:
         raw = tag.get(attr)
         if not raw or str(raw).startswith(("#", "mailto:", "tel:", "data:")):
             continue
-        absolute = urljoin(base, raw)
+        absolute = urljoin(base, str(raw))
         if tag.name == "a" and absolute.startswith(origin):
             pages.add(absolute.split("#")[0])
         else:
             assets.add(absolute)
+    for match in re.finditer(r"url\((['\"]?)(.*?)\1\)", html, flags=re.I):
+        raw = match.group(2)
+        if raw and not raw.startswith(("data:", "#")):
+            assets.add(urljoin(base, raw))
     return list(pages), list(assets)
+
+
+class SiteTransformerSpider(scrapy.Spider):
+    name = "sitetransformer"
+    custom_settings = {
+        "LOG_ENABLED": False,
+        "ROBOTSTXT_OBEY": False,
+        "DOWNLOAD_TIMEOUT": 25,
+        "RETRY_TIMES": 2,
+        "CONCURRENT_REQUESTS": 8,
+        "USER_AGENT": "Mozilla/5.0 SiteTransformerScrapyWorker/1.0",
+    }
+
+    def __init__(self, start_url: str, max_pages: int, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.start_urls = [start_url]
+        self.root = start_url
+        self.origin = f"{urlparse(start_url).scheme}://{urlparse(start_url).netloc}"
+        self.max_pages = max_pages
+        self.pages: dict[str, str] = {}
+        self.page_urls: list[str] = []
+        self.asset_urls: set[str] = set()
+        self.warnings: list[str] = []
+
+    def parse(self, response: Response):
+        if len(self.page_urls) >= self.max_pages:
+            return
+        url = response.url.split("#")[0]
+        if url in self.pages:
+            return
+        html = response.text
+        self.pages[url] = html
+        self.page_urls.append(url)
+        pages, assets = extract_links(html, url)
+        self.asset_urls.update(assets)
+        for link in pages:
+            if len(self.page_urls) >= self.max_pages:
+                break
+            if link not in self.pages and link.startswith(self.origin):
+                yield scrapy.Request(link, callback=self.parse, dont_filter=False)
+
+
+async def run_spider(root: str, max_pages: int) -> SiteTransformerSpider:
+    runner = CrawlerRunner()
+    crawler = runner.create_crawler(SiteTransformerSpider)
+    d = runner.crawl(crawler, start_url=root, max_pages=max_pages)
+    await defer.ensureDeferred(d).asFuture(asyncio.get_running_loop())
+    return crawler.spider
+
+
+async def fetch_asset(client: httpx.AsyncClient, url: str, root: str) -> dict[str, Any]:
+    response = await client.get(url, follow_redirects=True, timeout=25)
+    response.raise_for_status()
+    content = response.content
+    mime = response.headers.get("content-type", "application/octet-stream").split(";")[0]
+    kind = kind_from_url(url, mime)
+    is_text = mime.startswith("text/") or "javascript" in mime or "json" in mime or "xml" in mime or kind in ["css", "js"]
+    return {
+        "path": path_from_url(url, root, kind),
+        "url": url,
+        "kind": kind,
+        "mimeType": mime,
+        "encoding": "utf-8" if is_text else "base64",
+        "content": content.decode("utf-8", errors="ignore") if is_text else base64.b64encode(content).decode("ascii"),
+        "bytes": len(content),
+    }
 
 
 @app.post("/scrape")
 async def scrape(body: ScrapeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     token_guard(authorization)
     root = str(body.url)
-    queue = [root]
-    visited: set[str] = set()
+    spider = await run_spider(root, body.maxPages)
     files: dict[str, dict[str, Any]] = {}
-    asset_urls: set[str] = set()
-    page_urls: list[str] = []
-    warnings: list[str] = []
+    warnings = list(spider.warnings)
 
-    while queue and len(visited) < body.maxPages:
-        page_url = queue.pop(0)
-        if page_url in visited:
-            continue
-        visited.add(page_url)
-        try:
-            html = await fetch_page(page_url)
-            page_urls.append(page_url)
-            kind = "html"
-            path = path_from_url(page_url, root, kind)
-            files[path] = {
-                "path": path,
-                "url": page_url,
-                "kind": kind,
-                "mimeType": "text/html",
-                "encoding": "utf-8",
-                "content": html,
-                "bytes": len(html.encode("utf-8")),
-            }
-            pages, assets = extract_links(html, page_url)
-            asset_urls.update(assets)
-            for link in pages:
-                if link not in visited and link not in queue and len(queue) < body.maxPages:
-                    queue.append(link)
-        except Exception as exc:
-            warnings.append(f"Page failed: {page_url} ({exc})")
+    for page_url, html in spider.pages.items():
+        path = path_from_url(page_url, root, "html")
+        files[path] = {
+            "path": path,
+            "url": page_url,
+            "kind": "html",
+            "mimeType": "text/html",
+            "encoding": "utf-8",
+            "content": html,
+            "bytes": len(html.encode("utf-8")),
+        }
 
-    async with httpx.AsyncClient(headers={"user-agent": "SiteTransformerScraplingWorker/1.0"}) as client:
-        for asset_url in list(asset_urls)[: body.maxAssets]:
-            try:
-                content, mime = await fetch_bytes(client, asset_url)
-                kind = kind_from_url(asset_url, mime)
-                path = path_from_url(asset_url, root, kind)
-                is_text = mime.startswith("text/") or "javascript" in mime or "json" in mime or "xml" in mime or kind in ["css", "js"]
-                files[path] = {
-                    "path": path,
-                    "url": asset_url,
-                    "kind": kind,
-                    "mimeType": mime,
-                    "encoding": "utf-8" if is_text else "base64",
-                    "content": content.decode("utf-8", errors="ignore") if is_text else base64.b64encode(content).decode("ascii"),
-                    "bytes": len(content),
-                }
-            except Exception as exc:
-                warnings.append(f"Asset failed: {asset_url} ({exc})")
+    async with httpx.AsyncClient(headers={"user-agent": "Mozilla/5.0 SiteTransformerScrapyWorker/1.0"}) as client:
+        tasks = [fetch_asset(client, asset_url, root) for asset_url in list(spider.asset_urls)[: body.maxAssets]]
+        for result in await asyncio.gather(*tasks, return_exceptions=True):
+            if isinstance(result, Exception):
+                warnings.append(f"Asset failed: {result}")
+                continue
+            files[result["path"]] = result
 
     file_list = sorted(files.values(), key=lambda file: file["path"])
-    title = urlparse(root).hostname or "scraped-site"
+    first_html = next((file["content"] for file in file_list if file["kind"] == "html"), "")
+    title = html_title(first_html, urlparse(root).hostname or "scraped-site")
     return {
         "project": {
-            "id": "scrape_worker_" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
+            "id": "scrape_scrapy_" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
             "rootUrl": root,
             "title": title,
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "files": file_list,
-            "pages": page_urls,
-            "assets": list(asset_urls),
+            "pages": spider.page_urls,
+            "assets": list(spider.asset_urls),
             "stats": {
-                "pages": len(page_urls),
-                "assets": len(asset_urls),
+                "pages": len(spider.page_urls),
+                "assets": len(spider.asset_urls),
                 "files": len(file_list),
                 "totalBytes": sum(file["bytes"] for file in file_list),
                 "warnings": warnings,
             },
         },
-        "mode": "scrapling-worker",
+        "mode": "scrapy-worker",
     }
