@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, Code2, Download, Eye, FileCode2, Folder, Globe2, ImageIcon, Search, ShieldCheck } from "lucide-react";
 import type { ScrapeProject, ScrapedFile } from "@/lib/scrape-types";
 import { downloadScrapeZip } from "@/lib/scrape-export";
+import { buildPreviewHtml } from "@/lib/preview-html";
 
 type ViewMode = "preview" | "code" | "report";
 
@@ -14,75 +15,19 @@ function dataUrlFor(file: ScrapedFile, content = file.content) {
   return `data:${file.mimeType};charset=utf-8,${encodeURIComponent(content)}`;
 }
 
-function replaceResourceReferences(value: string, resources: Map<string, string>, baseUrl?: string) {
-  const resolve = (raw: string) => {
-    const direct = resources.get(raw) || resources.get(raw.replace(/^\/+/, ""));
-    if (direct) return direct;
-    if (baseUrl) {
-      try {
-        return resources.get(new URL(raw, baseUrl).toString()) || raw;
-      } catch {}
-    }
-    return raw;
-  };
-  let output = value.replace(/\b(src|href|poster|data)=(["'])(.*?)\2/gi, (_match, attribute, quote, raw) => `${attribute}=${quote}${resolve(raw)}${quote}`);
-  output = output.replace(/\bsrcset=(["'])(.*?)\1/gi, (_match, quote, srcset) => {
-    const next = srcset.split(",").map((candidate: string) => {
-      const [raw, ...descriptor] = candidate.trim().split(/\s+/);
-      return [resolve(raw), ...descriptor].join(" ");
-    }).join(", ");
-    return `srcset=${quote}${next}${quote}`;
-  });
-  return output.replace(/url\((['"]?)(.*?)\1\)/gi, (_match, quote, raw) => `url(${quote}${resolve(raw)}${quote})`);
-}
-
-function buildPreviewHtml(project: ScrapeProject, selectedFile?: ScrapedFile) {
-  const htmlFile = selectedFile?.kind === "html"
-    ? selectedFile
-    : project.files.find((file) => file.path.endsWith("index.html") && file.kind === "html") || project.files.find((file) => file.kind === "html");
-  if (!htmlFile || htmlFile.encoding !== "utf-8") {
-    return "<!doctype html><html><body style='font-family:system-ui;padding:32px'>Keine HTML-Datei für die Vorschau gefunden.</body></html>";
-  }
-
-  const resources = new Map<string, string>();
-  for (const file of project.files) {
-    if (file.kind === "html" || file.kind === "css") continue;
-    const dataUrl = dataUrlFor(file);
-    resources.set(file.url, dataUrl);
-    resources.set(file.path, dataUrl);
-    resources.set(`/${file.path.replace(/^\/+/, "")}`, dataUrl);
-  }
-  for (const file of project.files) {
-    if (file.kind !== "css" || file.encoding !== "utf-8") continue;
-    const dataUrl = dataUrlFor(file, replaceResourceReferences(file.content, resources, file.url));
-    resources.set(file.url, dataUrl);
-    resources.set(file.path, dataUrl);
-    resources.set(`/${file.path.replace(/^\/+/, "")}`, dataUrl);
-  }
-
-  let html = replaceResourceReferences(htmlFile.content, resources, htmlFile.url);
-  html = html
-    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
-    .replace(/<(?:iframe|object|embed)\b[\s\S]*?<\/(?:iframe|object|embed)>/gi, "")
-    .replace(/<(?:iframe|object|embed)\b[^>]*\/?>/gi, "")
-    .replace(/<meta\b[^>]*http-equiv=["']?refresh["']?[^>]*>/gi, "")
-    .replace(/\son[a-z]+\s*=\s*(["']).*?\1/gi, "")
-    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "")
-    .replace(/<base\b[^>]*>/gi, "")
-    .replace(/<form\b[^>]*>/gi, "<form action=\"#\" method=\"dialog\">");
-
-  const policy = "default-src 'none'; img-src data:; media-src data:; font-src data:; style-src 'unsafe-inline' data:; form-action 'none'; frame-src 'none';";
-  const previewHead = `<meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="referrer" content="no-referrer">`;
-  return /<head[\s>]/i.test(html) ? html.replace(/<head([^>]*)>/i, `<head$1>${previewHead}`) : `<!doctype html><html><head>${previewHead}</head><body>${html}</body></html>`;
-}
-
 function fileLabel(file: ScrapedFile) {
   const size = file.bytes < 1024 ? `${file.bytes} B` : `${Math.max(1, Math.round(file.bytes / 1024))} KB`;
   return `${file.kind.toUpperCase()} · ${size}`;
 }
 
 export function CrawlResultViewer({ project }: { project: ScrapeProject }) {
-  const [selectedPath, setSelectedPath] = useState(project.files.find((file) => file.kind === "html")?.path || project.files[0]?.path || "");
+  const [selectedPath, setSelectedPath] = useState(
+    project.files.find((file) => file.kind === "html" && file.url === project.rootUrl)?.path
+      || project.files.find((file) => file.kind === "html" && file.path === "index.html")?.path
+      || project.files.find((file) => file.kind === "html")?.path
+      || project.files[0]?.path
+      || ""
+  );
   const [viewMode, setViewMode] = useState<ViewMode>("preview");
   const [query, setQuery] = useState("");
   const selectedFile = useMemo(() => project.files.find((file) => file.path === selectedPath), [project.files, selectedPath]);

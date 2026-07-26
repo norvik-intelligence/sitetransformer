@@ -62,16 +62,19 @@ function addUrl(urls: Set<string>, raw: string | undefined, base: string) {
 }
 
 function extractAssetUrls(html: string, base: string) {
-  const urls = new Set<string>();
-  for (const match of html.matchAll(/<(?:img|script|source|video|audio|track|embed|object)\b[^>]*?\b(?:src|poster|data)=["']([^"']+)["']/gi)) {
-    addUrl(urls, match[1], base);
+  const critical = new Set<string>();
+  const media = new Set<string>();
+  const scripts = new Set<string>();
+  for (const match of html.matchAll(/<link\b[^>]*?\bhref=["']([^"']+)["']/gi)) addUrl(critical, match[1], base);
+  for (const match of html.matchAll(/<(?:img|source|video|audio|track|embed|object)\b[^>]*?\b(?:src|poster|data)=["']([^"']+)["']/gi)) {
+    addUrl(media, match[1], base);
   }
-  for (const match of html.matchAll(/<link\b[^>]*?\bhref=["']([^"']+)["']/gi)) addUrl(urls, match[1], base);
   for (const match of html.matchAll(/\bsrcset=["']([^"']+)["']/gi)) {
-    for (const candidate of match[1].split(",")) addUrl(urls, candidate.trim().split(/\s+/)[0], base);
+    for (const candidate of match[1].split(",")) addUrl(media, candidate.trim().split(/\s+/)[0], base);
   }
-  for (const match of html.matchAll(/url\((['"]?)(.*?)\1\)/gi)) addUrl(urls, match[2], base);
-  return [...urls];
+  for (const match of html.matchAll(/url\((['"]?)(.*?)\1\)/gi)) addUrl(critical, match[2], base);
+  for (const match of html.matchAll(/<script\b[^>]*?\bsrc=["']([^"']+)["']/gi)) addUrl(scripts, match[1], base);
+  return [...critical, ...media, ...scripts];
 }
 
 function extractCssUrls(css: string, base: string) {
@@ -95,33 +98,34 @@ function extractPageLinks(html: string, base: string, origin: string) {
   return [...links];
 }
 
-function localResourceUrl(raw: string, pageUrl: string, rootUrl: string) {
+function localResourceUrl(raw: string, pageUrl: string, capturedPaths: Map<string, string>) {
   if (!raw || /^(?:data:|blob:|#|mailto:|tel:|javascript:)/i.test(raw.trim())) return raw;
   try {
     const absolute = new URL(raw.trim(), pageUrl);
     absolute.hash = "";
-    return `/${pathFromUrl(absolute.toString(), rootUrl, kindFromUrl(absolute.toString(), ""))}`;
+    const capturedPath = capturedPaths.get(absolute.toString());
+    return capturedPath ? `/${capturedPath.replace(/^\/+/, "")}` : absolute.toString();
   } catch {
     return raw;
   }
 }
 
-function rewriteHtml(html: string, pageUrl: string, rootUrl: string) {
+function rewriteHtml(html: string, pageUrl: string, capturedPaths: Map<string, string>) {
   let rewritten = html.replace(/<(?:img|script|link|source|video|audio|track|embed|object)\b[^>]*>/gi, (tag) =>
-    tag.replace(/\b(src|href|poster|data)=(["'])(.*?)\2/gi, (_match, attribute, quote, raw) => `${attribute}=${quote}${localResourceUrl(raw, pageUrl, rootUrl)}${quote}`)
+    tag.replace(/\b(src|href|poster|data)=(["'])(.*?)\2/gi, (_match, attribute, quote, raw) => `${attribute}=${quote}${localResourceUrl(raw, pageUrl, capturedPaths)}${quote}`)
   );
   rewritten = rewritten.replace(/\bsrcset=(["'])(.*?)\1/gi, (_match, quote, srcset) => {
     const value = srcset.split(",").map((candidate: string) => {
       const [raw, ...descriptor] = candidate.trim().split(/\s+/);
-      return [localResourceUrl(raw, pageUrl, rootUrl), ...descriptor].join(" ");
+      return [localResourceUrl(raw, pageUrl, capturedPaths), ...descriptor].join(" ");
     }).join(", ");
     return `srcset=${quote}${value}${quote}`;
   });
-  return rewritten.replace(/url\((['"]?)(.*?)\1\)/gi, (_match, quote, raw) => `url(${quote}${localResourceUrl(raw, pageUrl, rootUrl)}${quote})`);
+  return rewritten.replace(/url\((['"]?)(.*?)\1\)/gi, (_match, quote, raw) => `url(${quote}${localResourceUrl(raw, pageUrl, capturedPaths)}${quote})`);
 }
 
-function rewriteCss(css: string, cssUrl: string, rootUrl: string) {
-  return css.replace(/url\((['"]?)(.*?)\1\)/gi, (_match, quote, raw) => `url(${quote}${localResourceUrl(raw, cssUrl, rootUrl)}${quote})`);
+function rewriteCss(css: string, cssUrl: string, capturedPaths: Map<string, string>) {
+  return css.replace(/url\((['"]?)(.*?)\1\)/gi, (_match, quote, raw) => `url(${quote}${localResourceUrl(raw, cssUrl, capturedPaths)}${quote})`);
 }
 
 async function fetchAsFile(url: string, rootUrl: string, maxBytes: number): Promise<ScrapedFile> {
@@ -158,7 +162,8 @@ export async function scrapeSite(rootUrlInput: string, requestedPages = 6, reque
   const rootUrl = assertUrl(rootUrlInput);
   const maxPages = Math.max(1, Math.min(Math.trunc(requestedPages), 10));
   const maxAssets = Math.max(0, Math.min(Math.trunc(requestedAssets), 80));
-  const origin = new URL(rootUrl).origin;
+  let projectRootUrl = rootUrl;
+  let crawlOrigin = new URL(rootUrl).origin;
   const pageQueue = [rootUrl];
   const visitedPages = new Set<string>();
   const queuedAssets = new Set<string>();
@@ -180,11 +185,16 @@ export async function scrapeSite(rootUrlInput: string, requestedPages = 6, reque
     if (visitedPages.has(requestedUrl)) continue;
     visitedPages.add(requestedUrl);
     try {
-      const file = await fetchAsFile(requestedUrl, rootUrl, MAX_PAGE_BYTES);
+      const file = await fetchAsFile(requestedUrl, projectRootUrl, MAX_PAGE_BYTES);
       if (file.kind !== "html") {
         warnings.push(`Page uebersprungen: ${requestedUrl} lieferte ${file.mimeType}.`);
         continue;
       }
+      if (!pageUrls.length) {
+        projectRootUrl = file.url;
+        crawlOrigin = new URL(file.url).origin;
+      }
+      file.path = pathFromUrl(file.url, projectRootUrl, file.kind);
       if (totalBytes + file.bytes > MAX_PROJECT_BYTES) {
         warnings.push("Projektlimit erreicht; weitere Seiten wurden nicht gespeichert.");
         break;
@@ -193,10 +203,9 @@ export async function scrapeSite(rootUrlInput: string, requestedPages = 6, reque
       const finalPageUrl = file.url;
       pageUrls.push(finalPageUrl);
       extractAssetUrls(originalHtml, finalPageUrl).forEach(enqueueAsset);
-      for (const link of extractPageLinks(originalHtml, finalPageUrl, origin)) {
+      for (const link of extractPageLinks(originalHtml, finalPageUrl, crawlOrigin)) {
         if (!visitedPages.has(link) && visitedPages.size + pageQueue.length < maxPages) pageQueue.push(link);
       }
-      file.content = rewriteHtml(originalHtml, finalPageUrl, rootUrl);
       files.set(file.path, file);
       totalBytes += file.bytes;
     } catch (error) {
@@ -208,7 +217,7 @@ export async function scrapeSite(rootUrlInput: string, requestedPages = 6, reque
     const batch = assetQueue.splice(0, Math.min(ASSET_CONCURRENCY, maxAssets - capturedAssets.length));
     const results = await Promise.all(batch.map(async (assetUrl) => {
       try {
-        return { assetUrl, file: await fetchAsFile(assetUrl, rootUrl, MAX_ASSET_BYTES) };
+        return { assetUrl, file: await fetchAsFile(assetUrl, projectRootUrl, MAX_ASSET_BYTES) };
       } catch (error) {
         return { assetUrl, error };
       }
@@ -226,12 +235,18 @@ export async function scrapeSite(rootUrlInput: string, requestedPages = 6, reque
       }
       if (file.kind === "css" && file.encoding === "utf-8") {
         extractCssUrls(file.content, file.url).forEach(enqueueAsset);
-        file.content = rewriteCss(file.content, file.url, rootUrl);
       }
       files.set(file.path, file);
       capturedAssets.push(file.url);
       totalBytes += file.bytes;
     }
+  }
+
+  const capturedPaths = new Map([...files.values()].map((file) => [file.url, file.path]));
+  for (const file of files.values()) {
+    if (file.encoding !== "utf-8") continue;
+    if (file.kind === "html") file.content = rewriteHtml(file.content, file.url, capturedPaths);
+    if (file.kind === "css") file.content = rewriteCss(file.content, file.url, capturedPaths);
   }
 
   const html = [...files.values()].find((file) => file.kind === "html")?.content || "";
@@ -245,7 +260,7 @@ export async function scrapeSite(rootUrlInput: string, requestedPages = 6, reque
   const compactWarnings = warnings.slice(0, 50);
   return {
     id: uid("scrape"),
-    rootUrl,
+    rootUrl: projectRootUrl,
     title: compactText(title, 120),
     createdAt: nowIso(),
     files: allFiles,
