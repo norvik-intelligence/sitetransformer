@@ -83,16 +83,17 @@ export function CrawlResultViewer({ project }: { project: ScrapeProject }) {
       });
       const crawlResult = await crawlResponse.json() as { content?: ContentSourceBundle; error?: string };
       if (!crawlResponse.ok || !crawlResult.content) throw new Error(crawlResult.error || "Inhaltsextraktion fehlgeschlagen.");
-      setSourceStatus(`${crawlResult.content.items.length} Inhalte erkannt · Gemini ordnet sie zu …`);
+      setSourceStatus(`${crawlResult.content.items.length} Inhalte erkannt · KI ordnet sie zu …`);
       const mappingResponse = await fetch("/api/transform/apply-content", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ html: targetHtml, source: crawlResult.content })
       });
-      const mappingResult = await mappingResponse.json() as { html?: string; error?: string };
+      const mappingResult = await mappingResponse.json() as { html?: string; error?: string; provider?: string; model?: string; fallbackUsed?: boolean };
       if (!mappingResponse.ok || !mappingResult.html) throw new Error(mappingResult.error || "Content-Mapping fehlgeschlagen.");
       setEditorHtml(mappingResult.html);
-      setSourceStatus("Content erfolgreich zugeordnet.");
+      const provider = mappingResult.provider === "openrouter" ? `OpenRouter · ${mappingResult.model || "Auto"}` : "Gemini";
+      setSourceStatus(`Content erfolgreich zugeordnet · ${provider}${mappingResult.fallbackUsed ? " (Fallback)" : ""}.`);
       setViewMode("editor");
     } catch (error) {
       setSourceStatus("");
