@@ -74,3 +74,25 @@ export async function downloadScrapeZip(project: ScrapeProject) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+export async function downloadEditedSiteZip(project: ScrapeProject, html: string) {
+  const zip = new JSZip();
+  zip.file("index.html", html);
+  zip.file("source-project.json", JSON.stringify({
+    id: project.id,
+    title: project.title,
+    rootUrl: project.rootUrl,
+    editedAt: new Date().toISOString()
+  }, null, 2));
+  for (const file of project.files) {
+    if (file.kind === "html") continue;
+    zip.file(file.path, decodeFile(file.content, file.encoding));
+  }
+  const blob = await zip.generateAsync({ type: "blob" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${project.title.toLowerCase().replace(/[^a-z0-9]+/gi, "-") || "edited-site"}-edited.zip`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
