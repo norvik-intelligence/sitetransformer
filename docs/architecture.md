@@ -1,64 +1,69 @@
 # SiteTransformer Architecture
 
-SiteTransformer is evolving into an open-source crawler studio that preserves existing website design, captures portable project files, and enables Framer-style editing and export workflows.
+SiteTransformer 2.0 is a focused crawler studio: submit one public website, capture a bounded portable file set, inspect it in an isolated browser workspace, and export it as a ZIP.
 
-## Product flow
+## Production flow
 
-1. **Crawl** a source website into HTML, CSS, JS, images, fonts, metadata, and route information.
-2. **Preview** the captured website inside a studio viewport.
-3. **Edit** text-based files in the browser and replace key images visually.
-4. **Import content** from a second website while preserving the original design structure.
-5. **Export** the result as a ZIP with manifests, or push the folder structure to GitHub.
-6. **Blueprint** future React/Motion/Framer-like transformations using `framer-blueprint.json`.
+1. `app/page.tsx` submits a single `POST /api/scrape` request.
+2. `lib/safe-fetch.ts` validates the public URL, DNS answers, ports, redirects, timeouts, and response size.
+3. `lib/crawler-worker.ts` uses the configured external worker when available; otherwise `lib/scraper.ts` runs the Vercel-native crawler.
+4. The API returns one complete `ScrapeProject`. No in-memory polling jobs are used because serverless invocations do not share process memory.
+5. `lib/scrape-storage.ts` stores the result in IndexedDB in the current browser.
+6. `app/scrape/[id]/page.tsx` opens the responsive crawl viewer.
+7. `lib/scrape-export.ts` creates a portable ZIP with source files, reports, and manifests.
 
 ## Current architecture
 
 ```txt
 Next.js App Router
-├─ app/page.tsx                  Landing + scrape start
-├─ app/scrape/[id]/page.tsx       Browser editor workspace
-├─ app/api/scrape/route.ts        Static fetch scraper or external worker bridge
-├─ app/api/content-import/route.ts Content-source extraction
-├─ app/api/github-push/route.ts   GitHub folder push
-├─ lib/scraper.ts                 Built-in static crawler
-├─ lib/content-import.ts          Semantic content mapping
-├─ lib/scrape-storage.ts          IndexedDB storage
-├─ lib/scrape-export.ts           ZIP + manifests
-└─ worker/scrapling-worker/       Optional Python crawl worker
+├─ app/page.tsx                    Landing + synchronous crawl start
+├─ app/scrape/[id]/page.tsx       IndexedDB-backed result route
+├─ app/api/health/route.ts        Runtime and capability health
+├─ app/api/scrape/route.ts        Validated crawler entrypoint
+├─ app/api/worker/status/route.ts Optional worker health
+├─ components/scraper/            Isolated responsive result viewer
+├─ lib/safe-fetch.ts              SSRF, DNS, redirect, timeout, byte limits
+├─ lib/scraper.ts                 Built-in HTML/asset crawler
+├─ lib/crawler-worker.ts          External worker bridge
+├─ lib/scrape-storage.ts          Browser IndexedDB storage
+├─ lib/scrape-export.ts           ZIP + machine-readable manifests
+└─ worker/scrapling-worker/       Optional hardened Scrapy worker
 ```
+
+## Security boundaries
+
+- Only public HTTP/HTTPS targets on ports 80/443 are accepted.
+- Loopback, link-local, private, carrier-grade NAT, documentation, multicast, and reserved IP ranges are blocked.
+- Every redirect destination is validated again.
+- Page, asset, total-project, redirect, crawl-count, and request-time limits are enforced.
+- The preview removes scripts, event handlers, embedded frames, refresh redirects, and form destinations.
+- Preview content runs in a sandboxed `srcDoc` iframe with a restrictive content security policy and no referrer.
+- Crawl results stay in the user's IndexedDB until explicitly exported.
+
+## Default Vercel limits
+
+The built-in path targets reliable serverless captures rather than unlimited mirrors:
+
+- Up to 10 pages
+- Up to 80 assets
+- 1.5 MB per page
+- 1 MB per asset
+- 3 MB raw project payload
+- 9 seconds per upstream resource request
+- 60 seconds per crawl function
+
+The API clamps caller-provided values to these bounds. Large, protected, or JavaScript-rendered sites should use the external worker.
 
 ## Open crawler stack
 
-| Layer | Candidate | Purpose |
+| Layer | Current / candidate | Purpose |
 | --- | --- | --- |
-| Static crawl | Built-in `fetch` crawler | Fast Vercel-native crawl for simple sites. |
-| Dynamic crawl | Scrapling worker | Stronger crawl for dynamic or protected pages. |
-| Browser render | Playwright | Hydrated DOM capture, screenshots, responsive checks. |
-| Queueing | Crawlee | Persistent queues, retries, crawl state, scaling. |
-| Export | JSZip + GitHub Contents API | Portable ZIP and repository push. |
-
-## Open Framer-style stack
-
-| Layer | Candidate | Purpose |
-| --- | --- | --- |
-| Visual editing | GrapesJS / Craft.js / custom DOM inspector | Click-to-edit and structured section editing. |
-| React blueprint | Next.js + extracted section tree | Convert captured pages into reusable React sections. |
-| Motion | `motion` | Framer-style hover, entrance, and scroll effects. |
-| UI | shadcn/ui + Tailwind | Premium, owned UI system. |
-| Workflow graph | xyflow | Visual crawl → normalize → edit → export pipeline. |
-| Agent context | GitMCP + MCP TypeScript SDK | AI-assisted project understanding and future MCP server. |
-
-## Content import rules
-
-The imported content website must never destroy the source design. Mapping should be conservative:
-
-- Replace document title and meta description.
-- Replace logo candidates in header/favicons.
-- Replace navigation labels and links only inside header/nav.
-- Replace primary hero headline/subline.
-- Replace primary non-logo images.
-- Avoid mass replacement of arbitrary text nodes.
-- Preserve CSS, layout, class names, and DOM structure whenever possible.
+| Static crawl | Built-in validated `fetch` crawler | Fast Vercel-native crawl for HTML sites. |
+| External crawl | Scrapy worker | Larger crawl budgets and stronger retries outside Vercel. |
+| Adaptive crawl | Scrapling | Future anti-bot-aware extraction where legally permitted. |
+| Browser render | Playwright | Future hydrated DOM capture and visual regression. |
+| Queueing | Crawlee | Future persistent queues, retries, and crawl state. |
+| Export | JSZip | Portable source tree and manifests. |
 
 ## Export artifacts
 
@@ -72,43 +77,34 @@ README.sitetransformer.md
 <captured website files>
 ```
 
-## Worker plan
-
-The Scrapling worker is intentionally separate from Vercel because heavy crawling can require longer timeouts, browser sessions, retries, and proxy-aware execution.
+## Worker configuration
 
 ```txt
 Vercel App
-  └─ /api/scrape
-       ├─ built-in fetch crawler if SCRAPLING_WORKER_URL is unset
-       └─ external Scrapling worker if SCRAPLING_WORKER_URL is set
+  └─ POST /api/scrape
+       ├─ built-in crawler when SCRAPY_WORKER_URL is unset
+       └─ external Scrapy worker when SCRAPY_WORKER_URL is set
 ```
+
+The preferred variables are `SCRAPY_WORKER_URL` and `SCRAPY_WORKER_TOKEN`. Legacy `CRAWLER_WORKER_*` and `SCRAPLING_WORKER_*` aliases remain supported.
 
 ## Roadmap
 
-### Phase 1 — Reliable crawl
+### Phase 1 — Production crawl depth
 
-- Better asset URL rewriting.
-- Crawl-depth controls in UI.
-- Failed asset report and retry button.
-- Worker mode with Scrapling/Playwright.
+- Deploy the external worker with mandatory authentication.
+- Add persistent crawl jobs and storage outside function memory.
+- Add robots-policy controls and retry reports.
+- Add browser-render mode for JavaScript-heavy pages.
 
-### Phase 2 — Real visual editing
+### Phase 2 — Structured transformation
 
-- Click an element in preview to select its DOM node.
-- Edit selected text, link, image, alt, visibility, and spacing.
-- Add undo/redo snapshots.
-- Preserve file diffs safely.
+- Parse captured DOM into a normalized section tree.
+- Detect repeated components and editable content slots.
+- Preserve file-level diffs and undo/redo history.
 
-### Phase 3 — Component extraction
+### Phase 3 — Delivery
 
-- Detect repeated sections.
-- Generate editable section schema.
-- Produce React/Next.js components from captured DOM.
-- Attach Motion presets from blueprint.
-
-### Phase 4 — Production delivery
-
-- Full Next.js project export.
-- GitHub branch/PR creation.
-- Vercel deploy handoff.
-- Lighthouse and responsive QA reports.
+- Generate a clean Next.js project from the normalized tree.
+- Create authenticated GitHub branches and pull requests.
+- Add Lighthouse, accessibility, and responsive regression reports.

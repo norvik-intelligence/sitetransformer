@@ -1,9 +1,10 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowRight, Boxes, Download, GitBranch, Globe2, Layers3, Loader2, Search, ShieldCheck, Sparkles } from "lucide-react";
 import { OpenSourceStackPanel } from "@/components/OpenSourceStackPanel";
 import { saveScrapeProject } from "@/lib/scrape-storage";
-import type { ScrapeJob } from "@/lib/scrape-types";
+import type { ScrapeProject } from "@/lib/scrape-types";
 
 const proofPoints = [
   { label: "Crawl", value: "HTML · CSS · JS · Assets", icon: Globe2 },
@@ -23,43 +24,42 @@ async function readJsonOrThrow(res: Response) {
   }
 }
 
-async function waitForJob(jobId: string, onUpdate: (job: ScrapeJob) => void) {
-  for (let attempt = 0; attempt < 120; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, attempt < 5 ? 700 : 1400));
-    const res = await fetch(`/api/scrape/jobs/${jobId}`, { cache: "no-store" });
-    const data = await readJsonOrThrow(res);
-    if (!res.ok) throw new Error(data.error || "Scrape-Job konnte nicht gelesen werden.");
-    const job = data.job as ScrapeJob;
-    onUpdate(job);
-    if (job.status === "ready") return job;
-    if (job.status === "failed") throw new Error(job.error || job.message || "Scrape fehlgeschlagen.");
-  }
-  throw new Error("Scrape dauert zu lange. Bitte mit weniger Seiten/Assets erneut versuchen oder Worker aktivieren.");
-}
-
 export default function ScraperHome() {
+  const router = useRouter();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [job, setJob] = useState<ScrapeJob | null>(null);
+  const [status, setStatus] = useState("");
 
-  async function scrape() {
+  async function scrape(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!url.trim() || loading) return;
     setLoading(true);
     setError("");
-    setJob(null);
+    setStatus("Website wird sicher geprüft und gecrawlt …");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 65_000);
     try {
-      const res = await fetch("/api/scrape/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url, maxPages: 8, maxAssets: 100, mode: "auto" }) });
+      const res = await fetch("/api/scrape", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: url.trim(), maxPages: 6, maxAssets: 60, mode: "auto" }),
+        cache: "no-store",
+        signal: controller.signal
+      });
       const data = await readJsonOrThrow(res);
-      if (!res.ok) throw new Error(data.error || "Scrape-Job konnte nicht gestartet werden.");
-      setJob(data.job);
-      const finished = await waitForJob(data.job.id, setJob);
-      if (!finished.project) throw new Error("Der Scrape-Job ist fertig, aber enthaelt kein Projekt.");
-      await saveScrapeProject(finished.project);
-      window.location.href = `/scrape/${finished.project.id}`;
+      if (!res.ok) throw new Error(data.error || "Die Website konnte nicht gecrawlt werden.");
+      const project = data.project as ScrapeProject | undefined;
+      if (!project?.id || !Array.isArray(project.files)) throw new Error("Der Server hat kein gültiges Crawl-Projekt geliefert.");
+      setStatus(`${project.stats.files} Dateien erfasst. Ergebnis wird geöffnet …`);
+      await saveScrapeProject(project);
+      router.push(`/scrape/${project.id}`);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Fehler";
-      setError(message.includes("quota") || message.includes("Quota") ? "Die Website ist sehr gross. Der Scrape wurde verarbeitet, konnte aber nicht lokal gespeichert werden. Bitte nach dem Deployment erneut versuchen." : message);
+      const message = e instanceof Error ? e.message : "Unbekannter Fehler";
+      setStatus("");
+      setError(e instanceof Error && e.name === "AbortError" ? "Der Crawl hat das Zeitlimit erreicht. Versuche eine kleinere oder weniger geschützte Website." : message);
     } finally {
+      window.clearTimeout(timeout);
       setLoading(false);
     }
   }
@@ -104,16 +104,16 @@ export default function ScraperHome() {
             </h1>
             <p className="mt-7 max-w-2xl text-xl leading-9 text-white/58">Ein fokussierter Open-Source Crawler: Websites als echte HTML-, CSS-, JS-, Bild- und Asset-Dateien erfassen, sauber prüfen und als ZIP oder GitHub-Struktur exportieren.</p>
 
-            <div className="mt-9 max-w-3xl rounded-[2.1rem] border border-white/12 bg-white/[0.08] p-2.5 shadow-[0_30px_110px_rgba(0,0,0,.55)] backdrop-blur-2xl">
+            <form onSubmit={scrape} className="mt-9 max-w-3xl rounded-[2.1rem] border border-white/12 bg-white/[0.08] p-2.5 shadow-[0_30px_110px_rgba(0,0,0,.55)] backdrop-blur-2xl">
               <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-                <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://website-to-crawl.com" className="h-16 rounded-[1.5rem] border border-white/10 bg-black/35 px-5 text-base font-semibold text-white outline-none transition placeholder:text-white/25 focus:border-cyan-200/40 focus:ring-4 focus:ring-cyan-200/10" />
-                <button onClick={scrape} disabled={!url || loading} className="inline-flex h-16 items-center justify-center rounded-[1.5rem] bg-white px-6 text-sm font-black text-black shadow-2xl shadow-white/10 transition hover:scale-[1.015] hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50">
+                <input aria-label="Website URL" inputMode="url" autoComplete="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://website-to-crawl.com" className="h-16 rounded-[1.5rem] border border-white/10 bg-black/35 px-5 text-base font-semibold text-white outline-none transition placeholder:text-white/25 focus:border-cyan-200/40 focus:ring-4 focus:ring-cyan-200/10" />
+                <button type="submit" disabled={!url.trim() || loading} className="inline-flex h-16 items-center justify-center rounded-[1.5rem] bg-white px-6 text-sm font-black text-black shadow-2xl shadow-white/10 transition hover:scale-[1.015] hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50">
                   {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowRight className="mr-2 h-4 w-4" />}{loading ? "Crawling..." : "Start crawler"}
                 </button>
               </div>
-              {job ? <div className="mt-3 rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-3"><div className="flex items-center justify-between text-sm font-bold text-cyan-100"><span>{job.message}</span><span>{job.progress}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-cyan-300 transition-all" style={{ width: `${job.progress}%` }} /></div></div> : null}
-              {error ? <p className="mt-2 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-medium text-red-100">{error}</p> : null}
-            </div>
+              {status ? <div role="status" aria-live="polite" className="mt-3 rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-3"><div className="flex items-center gap-3 text-sm font-bold text-cyan-100"><Loader2 className="h-4 w-4 animate-spin" /><span>{status}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full w-2/3 animate-pulse rounded-full bg-cyan-300" /></div></div> : null}
+              {error ? <p role="alert" className="mt-2 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-medium text-red-100">{error}</p> : null}
+            </form>
 
             <div className="mt-8 grid max-w-3xl gap-3 text-sm md:grid-cols-3">
               {proofPoints.map((point) => {

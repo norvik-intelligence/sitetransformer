@@ -2,9 +2,8 @@
   "framework": "nextjs",
   "regions": ["fra1"],
   "functions": {
-    "app/api/clone/route.ts": { "maxDuration": 60 },
-    "app/api/content-mapping/route.ts": { "maxDuration": 60 },
-    "app/api/upload/route.ts": { "maxDuration": 30 }
+    "app/api/scrape/route.ts": { "maxDuration": 60 },
+    "app/api/worker/status/route.ts": { "maxDuration": 10 }
   },
   "headers": [
     {
@@ -12,7 +11,10 @@
       "headers": [
         { "key": "X-Frame-Options", "value": "DENY" },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), payment=()" },
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" }
       ]
     }
   ]

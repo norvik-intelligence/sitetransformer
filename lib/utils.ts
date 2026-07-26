@@ -7,12 +7,21 @@ export function nowIso() {
 }
 
 export function assertUrl(value: string) {
-  const url = new URL(value);
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error("Bitte eine Website-URL eingeben.");
+  const withProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let url: URL;
+  try {
+    url = new URL(withProtocol);
+  } catch {
+    throw new Error("Bitte eine gueltige Website-URL eingeben.");
+  }
   if (!["http:", "https:"].includes(url.protocol)) throw new Error("Nur http/https URLs sind erlaubt.");
   const host = url.hostname.toLowerCase();
-  if (["localhost", "127.0.0.1", "0.0.0.0"].includes(host) || host.endsWith(".local")) {
+  if (!host || ["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(host) || host.endsWith(".local") || host.endsWith(".internal")) {
     throw new Error("Lokale oder private URLs sind blockiert.");
   }
+  url.hash = "";
   return url.toString();
 }
 
