@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import os
 import re
+import socket
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
-import scrapy
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel, HttpUrl
-from scrapy.crawler import CrawlerRunner
-from scrapy.http import Response
+from pydantic import BaseModel, Field, HttpUrl
 from twisted.internet import asyncioreactor
 
 try:
@@ -22,6 +21,9 @@ try:
 except Exception:
     pass
 
+import scrapy  # noqa: E402
+from scrapy.crawler import CrawlerRunner  # noqa: E402
+from scrapy.http import Response  # noqa: E402
 from twisted.internet import defer  # noqa: E402
 
 app = FastAPI(title="SiteTransformer Scrapy Worker")
@@ -29,14 +31,45 @@ app = FastAPI(title="SiteTransformer Scrapy Worker")
 
 class ScrapeRequest(BaseModel):
     url: HttpUrl
-    maxPages: int = 20
-    maxAssets: int = 200
+    maxPages: int = Field(default=10, ge=1, le=20)
+    maxAssets: int = Field(default=80, ge=0, le=200)
 
 
 def token_guard(authorization: str | None) -> None:
     expected = os.getenv("SCRAPY_WORKER_TOKEN") or os.getenv("CRAWLER_WORKER_TOKEN") or os.getenv("SCRAPLING_WORKER_TOKEN")
     if expected and authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+async def validate_public_url(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Only public http/https URLs are allowed")
+    if parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail="URLs with credentials are not allowed")
+    if parsed.port and parsed.port not in {80, 443}:
+        raise HTTPException(status_code=400, detail="Only ports 80 and 443 are allowed")
+    try:
+        records = await asyncio.to_thread(socket.getaddrinfo, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+    except socket.gaierror as error:
+        raise HTTPException(status_code=400, detail="Hostname could not be resolved") from error
+    addresses = {record[4][0] for record in records}
+    if not addresses or any(not ipaddress.ip_address(address.split("%")[0]).is_global for address in addresses):
+        raise HTTPException(status_code=400, detail="Private, local, or reserved network targets are blocked")
+    return value
+
+
+async def safe_get(client: httpx.AsyncClient, value: str, max_redirects: int = 4) -> httpx.Response:
+    current = await validate_public_url(value)
+    for redirect in range(max_redirects + 1):
+        response = await client.get(current, follow_redirects=False, timeout=25)
+        if response.status_code not in {301, 302, 303, 307, 308}:
+            return response
+        location = response.headers.get("location")
+        if not location or redirect == max_redirects:
+            raise HTTPException(status_code=400, detail="Too many or invalid redirects")
+        current = await validate_public_url(urljoin(current, location))
+    raise HTTPException(status_code=400, detail="Too many redirects")
 
 
 @app.get("/health")
@@ -116,7 +149,8 @@ class SiteTransformerSpider(scrapy.Spider):
     name = "sitetransformer"
     custom_settings = {
         "LOG_ENABLED": False,
-        "ROBOTSTXT_OBEY": False,
+        "ROBOTSTXT_OBEY": True,
+        "REDIRECT_ENABLED": False,
         "DOWNLOAD_TIMEOUT": 25,
         "RETRY_TIMES": 2,
         "CONCURRENT_REQUESTS": 8,
@@ -161,7 +195,7 @@ async def run_spider(root: str, max_pages: int) -> SiteTransformerSpider:
 
 
 async def fetch_asset(client: httpx.AsyncClient, url: str, root: str) -> dict[str, Any]:
-    response = await client.get(url, follow_redirects=True, timeout=25)
+    response = await safe_get(client, url)
     response.raise_for_status()
     content = response.content
     mime = response.headers.get("content-type", "application/octet-stream").split(";")[0]
@@ -181,7 +215,11 @@ async def fetch_asset(client: httpx.AsyncClient, url: str, root: str) -> dict[st
 @app.post("/scrape")
 async def scrape(body: ScrapeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     token_guard(authorization)
-    root = str(body.url)
+    root = await validate_public_url(str(body.url))
+    async with httpx.AsyncClient(headers={"user-agent": "Mozilla/5.0 SiteTransformerScrapyWorker/2.0"}) as client:
+        entry_response = await safe_get(client, root)
+        entry_response.raise_for_status()
+        root = str(entry_response.url)
     spider = await run_spider(root, body.maxPages)
     files: dict[str, dict[str, Any]] = {}
     warnings = list(spider.warnings)
@@ -198,7 +236,7 @@ async def scrape(body: ScrapeRequest, authorization: str | None = Header(default
             "bytes": len(html.encode("utf-8")),
         }
 
-    async with httpx.AsyncClient(headers={"user-agent": "Mozilla/5.0 SiteTransformerScrapyWorker/1.0"}) as client:
+    async with httpx.AsyncClient(headers={"user-agent": "Mozilla/5.0 SiteTransformerScrapyWorker/2.0"}) as client:
         tasks = [fetch_asset(client, asset_url, root) for asset_url in list(spider.asset_urls)[: body.maxAssets]]
         for result in await asyncio.gather(*tasks, return_exceptions=True):
             if isinstance(result, Exception):

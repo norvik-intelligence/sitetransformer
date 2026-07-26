@@ -1,19 +1,20 @@
 # SiteTransformer
 
-Open-source crawler studio for turning existing websites into portable files, editable previews, GitHub-ready exports, and future Framer-style Motion/React blueprints.
+Open-source crawler studio for turning public websites into portable files, isolated previews, crawl reports, and GitHub-ready ZIP exports.
 
 ## What it does today
 
 - Crawls a website into HTML, CSS, JS, images, fonts, and metadata.
 - Stores scrape projects locally in the browser.
-- Previews captured pages in a redesigned studio viewport.
-- Lets you edit text files directly in-browser.
-- Imports content from a second website and maps it into the captured design.
-- Replaces hero images with drag-and-drop.
-- Exports a ZIP or pushes the folder structure to GitHub.
-- Includes an optional Scrapling worker for stronger crawls outside Vercel limits.
+- Previews captured pages in an isolated, script-free studio viewport.
+- Searches and inspects captured source files and crawl warnings.
+- Exports a portable ZIP with the source tree, report, and machine-readable manifests.
+- Includes an optional Scrapy worker for stronger crawls outside Vercel limits.
+- Protects server-side fetches against private-network/metadata targets, unsafe redirects, oversized files, and unbounded crawl requests.
 - Installs GitMCP context for the open-source stack in `.vscode/mcp.json`.
 - Exports `framer-blueprint.json` and `.sitetransformer/open-source-stack.json` for downstream automation.
+
+The default Vercel path intentionally caps pages, assets, individual response sizes, and the total response payload. Large or JavaScript-rendered sites should use the external worker.
 
 ## GitHub-researched open-source stack
 
@@ -76,7 +77,7 @@ npm run typecheck
 npm run build
 ```
 
-## Optional Scrapling worker
+## Optional Scrapy worker
 
 ```bash
 cd worker/scrapling-worker
@@ -89,10 +90,11 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 Configure the Next.js app:
 
 ```env
-SCRAPLING_WORKER_URL=http://localhost:8000
-SCRAPLING_WORKER_TOKEN=optional-secret
-GITHUB_TOKEN=github_pat_for_pushes
+SCRAPY_WORKER_URL=https://your-worker.example.com
+SCRAPY_WORKER_TOKEN=required-secret
 ```
+
+Legacy `CRAWLER_WORKER_*` and `SCRAPLING_WORKER_*` variable names remain supported.
 
 ## Roadmap
 
