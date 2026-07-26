@@ -17,6 +17,13 @@ const GrapesJSEditor = dynamic(
 
 type ViewMode = "preview" | "code" | "report" | "editor";
 
+function editableHtmlFor(project: ScrapeProject) {
+  const root = project.files.find((file) => file.kind === "html" && file.url === project.rootUrl)
+    || project.files.find((file) => file.kind === "html" && file.path === "index.html")
+    || project.files.find((file) => file.kind === "html");
+  return buildPreviewHtml(project, root);
+}
+
 function dataUrlFor(file: ScrapedFile, content = file.content) {
   if (file.encoding === "base64") return `data:${file.mimeType};base64,${content}`;
   return `data:${file.mimeType};charset=utf-8,${encodeURIComponent(content)}`;
@@ -41,7 +48,8 @@ export function CrawlResultViewer({ project }: { project: ScrapeProject }) {
   const [sourceStatus, setSourceStatus] = useState("");
   const [sourceError, setSourceError] = useState("");
   const [mapping, setMapping] = useState(false);
-  const [editorHtml, setEditorHtml] = useState("");
+  const [editorHtml, setEditorHtml] = useState(() => editableHtmlFor(project));
+  const [editorRevision, setEditorRevision] = useState(0);
   const selectedFile = useMemo(() => project.files.find((file) => file.path === selectedPath), [project.files, selectedPath]);
   const filteredFiles = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -92,6 +100,7 @@ export function CrawlResultViewer({ project }: { project: ScrapeProject }) {
       const mappingResult = await mappingResponse.json() as { html?: string; error?: string; provider?: string; model?: string; fallbackUsed?: boolean };
       if (!mappingResponse.ok || !mappingResult.html) throw new Error(mappingResult.error || "Content-Mapping fehlgeschlagen.");
       setEditorHtml(mappingResult.html);
+      setEditorRevision((revision) => revision + 1);
       const provider = mappingResult.provider === "openrouter" ? `OpenRouter · ${mappingResult.model || "Auto"}` : "Gemini";
       setSourceStatus(`Content erfolgreich zugeordnet · ${provider}${mappingResult.fallbackUsed ? " (Fallback)" : ""}.`);
       setViewMode("editor");
@@ -179,11 +188,11 @@ export function CrawlResultViewer({ project }: { project: ScrapeProject }) {
                   <ModeButton active={viewMode === "preview"} onClick={() => setViewMode("preview")} icon={<Eye className="h-3.5 w-3.5" />} label="Preview" />
                   <ModeButton active={viewMode === "code"} onClick={() => setViewMode("code")} icon={<Code2 className="h-3.5 w-3.5" />} label="Code" />
                   <ModeButton active={viewMode === "report"} onClick={() => setViewMode("report")} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Report" />
-                  <ModeButton active={viewMode === "editor"} onClick={() => setViewMode("editor")} icon={<Sparkles className="h-3.5 w-3.5" />} label="Editor" disabled={!editorHtml} />
+                  <ModeButton active={viewMode === "editor"} onClick={() => setViewMode("editor")} icon={<Sparkles className="h-3.5 w-3.5" />} label="Editor" />
                 </div>
               </div>
               <div className="mx-auto min-h-0 w-full max-w-[1180px] flex-1 overflow-hidden rounded-[18px] border border-white/10 bg-black shadow-[0_30px_90px_rgba(0,0,0,.42)]">
-                {viewMode === "preview" ? previewContent : viewMode === "editor" && editorHtml ? <GrapesJSEditor html={editorHtml} onChange={setEditorHtml} /> : viewMode === "report" ? <pre className="h-full min-h-[55vh] overflow-auto bg-[#090909] p-5 font-mono text-xs leading-6 text-white/75 lg:min-h-0">{report}</pre> : selectedFile?.encoding === "utf-8" ? <pre className="h-full min-h-[55vh] overflow-auto whitespace-pre-wrap break-words bg-[#090909] p-5 font-mono text-xs leading-6 text-white/75 lg:min-h-0">{selectedFile.content}</pre> : <div className="flex h-full min-h-[55vh] items-center justify-center text-center text-white/45 lg:min-h-0"><div><ImageIcon className="mx-auto mb-3 h-8 w-8" /><p className="font-black text-white">Binary asset</p><p className="mt-1 text-sm">Im ZIP vollständig enthalten.</p></div></div>}
+                {viewMode === "preview" ? previewContent : viewMode === "editor" ? <GrapesJSEditor key={editorRevision} html={editorHtml} onChange={setEditorHtml} /> : viewMode === "report" ? <pre className="h-full min-h-[55vh] overflow-auto bg-[#090909] p-5 font-mono text-xs leading-6 text-white/75 lg:min-h-0">{report}</pre> : selectedFile?.encoding === "utf-8" ? <pre className="h-full min-h-[55vh] overflow-auto whitespace-pre-wrap break-words bg-[#090909] p-5 font-mono text-xs leading-6 text-white/75 lg:min-h-0">{selectedFile.content}</pre> : <div className="flex h-full min-h-[55vh] items-center justify-center text-center text-white/45 lg:min-h-0"><div><ImageIcon className="mx-auto mb-3 h-8 w-8" /><p className="font-black text-white">Binary asset</p><p className="mt-1 text-sm">Im ZIP vollständig enthalten.</p></div></div>}
               </div>
             </div>
           </section>
